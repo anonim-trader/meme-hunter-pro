@@ -1,0 +1,156 @@
+{\rtf1\fbidis\ansi\ansicpg1251\deff0\nouicompat\deflang1049{\fonttbl{\f0\fnil\fcharset0 Calibri;}{\f1\fnil\fcharset204 Calibri;}{\f2\fnil Calibri;}{\f3\fnil\fcharset1 Segoe UI Symbol;}{\f4\fnil\fcharset1 Segoe UI Emoji;}{\f5\fnil\fcharset1 Segoe UI Symbol;}}
+{\*\generator Riched20 10.0.22000}\viewkind4\uc1 
+\pard\sa200\sl276\slmult1\f0\fs22\lang1033 requests\par
+python-telegram-bot==20.7\par
+schedule\par
+import requests\par
+import time\par
+import logging\par
+import schedule\par
+from telegram import Bot\par
+\par
+# === \f1\lang1049\'d2\'c2\'ce\'c8 \'cd\'c0\'d1\'d2\'d0\'ce\'c9\'ca\'c8 ===\par
+TELEGRAM_TOKEN = "8216749727:AAHF0yWH4uGiBGvj697eja-FiBrZTs-PtmA"\par
+TELEGRAM_CHAT_ID = 7422789062  # \'e1\'e5\'e7 \'ea\'e0\'e2\'fb\'f7\'e5\'ea \f2\emdash  \f1\'fd\'f2\'ee \'f7\'e8\'f1\'eb\'ee\par
+NETWORK = "solana"\par
+\par
+bot = Bot(token=TELEGRAM_TOKEN)\par
+logging.basicConfig(level=logging.INFO)\par
+\par
+# === \'c2\'d1\'cf\'ce\'cc\'ce\'c3\'c0\'d2\'c5\'cb\'dc\'cd\'db\'c5 \'d4\'d3\'cd\'ca\'d6\'c8\'c8 ===\par
+\par
+def is_meme_name(name: str) -> bool:\par
+    name = name.lower()\par
+    keywords = [\par
+        'dog', 'cat', 'pup', 'bear', 'bull', 'troll', 'wojak', 'pepe', 'ai', \par
+        'trump', 'starbucks', 'santa', 'rizz', 'meme', 'coin', 'moon', 'woof',\par
+        'dick', 'neet', 'pfp', 'christmas', 'flowey', 'elf', 'horse', 'anon',\par
+        'bubble', 'private', 'zero', 'kitkat', 'clippy', 'groo', 'vervle'\par
+    ]\par
+    return any(kw in name for kw in keywords)\par
+\par
+def check_lp_lock(lp_token_address: str) -> bool:\par
+    """\'cf\'f0\'ee\'e2\'e5\'f0\'ff\'e5\'f2, \'e7\'e0\'e1\'eb\'ee\'ea\'e8\'f0\'ee\'e2\'e0\'ed \'eb\'e8 LP \'f7\'e5\'f0\'e5\'e7 Solscan API"""\par
+    try:\par
+        url = f"https://public-api.solscan.io/token/holders?tokenAddress=\{lp_token_address\}&limit=5"\par
+        res = requests.get(url, timeout=10)\par
+        if res.status_code != 200:\par
+            return False\par
+        holders = res.json().get("data", [])\par
+        if not holders:\par
+            return False\par
+        top_holder = holders[0]["owner"].lower()\par
+        lock_indicators = [\par
+            "dead", "lock", "teamfi", "unicrypt",\par
+            "hxro", "pump", "raydium", "orca"\par
+        ]\par
+        return any(ind in top_holder for ind in lock_indicators) or top_holder == "5qpwz9v3qjzu8z7g3x2e5f5l5j5v5u5w5t5r5e5c5o5m5"\par
+    except Exception as e:\par
+        logging.warning(f"\'ce\'f8\'e8\'e1\'ea\'e0 \'ef\'f0\'ee\'e2\'e5\'f0\'ea\'e8 LP lock: \{e\}")\par
+        return False\par
+\par
+def fetch_top_pairs():\par
+    url = f"https://api.geckoterminal.com/api/v2/networks/\{NETWORK\}/pools?page=1"\par
+    try:\par
+        res = requests.get(url, timeout=15)\par
+        if res.status_code != 200:\par
+            logging.error(f"GeckoTerminal error: \{res.status_code\}")\par
+            return []\par
+        data = res.json()\par
+        candidates = []\par
+        for pool in data.get("data", []):\par
+            attrs = pool["attributes"]\par
+            age_sec = time.time() - attrs.get("created_at", 0)\par
+            if not (30 * 60 <= age_sec <= 6 * 3600):  # 30 \'ec\'e8\'ed \f2\endash  6 \f1\'f7\'e0\'f1\'ee\'e2\par
+                continue\par
+\par
+            name = attrs.get("name", "Unknown")\par
+            if "usd" in name.lower() or "usdt" in name.lower():\par
+                continue\par
+\par
+            mc = attrs.get("market_cap_usd", 0)\par
+            vol = attrs.get("volume_usd", \{\}).get("h24", 0)\par
+            liquidity = attrs.get("reserve_in_usd", 0)\par
+            txns_1h = attrs.get("transactions", \{\}).get("h1", \{\})\par
+            buys = txns_1h.get("buys", 0)\par
+            sells = txns_1h.get("sells", 0)\par
+            price = attrs.get("base_token_price_usd", 0)\par
+\par
+            if mc == 0 or vol == 0 or liquidity == 0:\par
+                continue\par
+            vol_mc = vol / mc\par
+            if not (0.5 <= vol_mc <= 3.0):\par
+                continue\par
+            if liquidity < 40_000:\par
+                continue\par
+            if buys + sells < 2000:\par
+                continue\par
+            if buys <= sells:\par
+                continue\par
+            if price > 0.1:\par
+                continue\par
+            if not is_meme_name(name):\par
+                continue\par
+\par
+            lp_token = pool["relationships"]["base_token"]["data"]["id"]\par
+            lp_locked = check_lp_lock(lp_token)\par
+\par
+            score = vol_mc * 1.5 + (buys / (sells + 1)) * 0.5 + (1 if lp_locked else 0)\par
+            candidates.append(\{\par
+                "name": name,\par
+                "mc": mc,\par
+                "liquidity": liquidity,\par
+                "vol_mc": vol_mc,\par
+                "buys": buys,\par
+                "sells": sells,\par
+                "lp_locked": lp_locked,\par
+                "score": score,\par
+                "link": f"https://dexscreener.com/\{NETWORK\}/\{pool['id']\}"\par
+            \})\par
+        candidates.sort(key=lambda x: x["score"], reverse=True)\par
+        return candidates[:10]\par
+    except Exception as e:\par
+        logging.error(f"\'ce\'f8\'e8\'e1\'ea\'e0 \'ef\'f0\'e8 \'f1\'e1\'ee\'f0\'e5 \'e4\'e0\'ed\'ed\'fb\'f5: \{e\}")\par
+        return []\par
+\par
+def send_report():\par
+    try:\par
+        top10 = fetch_top_pairs()\par
+        if not top10:\par
+            bot.send_message(chat_id=TELEGRAM_CHAT_ID, text="\f3\u-10179?\u-8947?\f2\lang1033  \f1\lang1049\'cd\'e5\'f2 \'ef\'ee\'e4\'f5\'ee\'e4\'ff\'f9\'e8\'f5 \'ea\'e0\'ed\'e4\'e8\'e4\'e0\'f2\'ee\'e2 \'e7\'e0 \'ef\'ee\'f1\'eb\'e5\'e4\'ed\'e8\'e5 2 \'f7\'e0\'f1\'e0.")\par
+            return\par
+\par
+        top3 = top10[:3]\par
+        top1 = top3[0]\par
+\par
+        message = "\f4\u-10178?\u-8736?\f2\lang1033  \f1\lang1049\'c8\'c8-\'c0\'cd\'c0\'cb\'c8\'d2\'c8\'ca \'cc\'c5\'cc\'ca\'ce\'c8\'cd\'ce\'c2\\n"\par
+        message += "\f5\u9201?\f2\lang1033  \f1\lang1049\'ce\'e1\'ed\'ee\'e2\'eb\'e5\'ed\'e8\'e5 \'ea\'e0\'e6\'e4\'fb\'e5 2 \'f7\'e0\'f1\'e0\\n\\n"\par
+\par
+        message += "\f3\u-10178?\u-8889?\f2\lang1033  \f1\lang1049\'d2\'ce\'cf-1:\\n"\par
+        message += f"\f4\u-10178?\u-8551?\f2\lang1033  \f0\{top1['name']\}\\n"\par
+        message += f"\f3\u-10179?\u-9049?\f2  \f0 LP: $\{top1['liquidity']:,.0f\} \{'\f5\u9989?\f0 ' if top1['lp_locked'] else '\f4\u9888?\u-497?\f0 '\}\\n"\par
+        message += f"\f3\u-10179?\u-9014?\f2  \f0 Vol/MC: \{top1['vol_mc']:.2f\}\\n"\par
+        message += f"\f3\u-10179?\u-9016?\f2  \f0 Txns: \{top1['buys']\}/\{top1['sells']\}\\n"\par
+        message += f"\f3\u-10179?\u-8937?\f2  \f0\{top1['link']\}\\n\\n"\par
+\par
+        for i, coin in enumerate(top3[1:], start=2):\par
+            medal = "\f3\u-10178?\u-8888?\f0 " if i == 2 else "\f3\u-10178?\u-8887?\f0 "\par
+            message += f"\{medal\} \{coin['name']\}\\n"\par
+            message += f"  \f3\u-10179?\u-9049?\f2  \f0 $\{coin['liquidity']:,.0f\} \{'\f5\u9989?\f0 ' if coin['lp_locked'] else '\f4\u9888?\u-497?\f0 '\} | Vol/MC: \{coin['vol_mc']:.2f\}\\n"\par
+\par
+        bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)\par
+        logging.info("\f1\lang1049\'ce\'f2\'f7\'b8\'f2 \'f3\'f1\'ef\'e5\'f8\'ed\'ee \'ee\'f2\'ef\'f0\'e0\'e2\'eb\'e5\'ed!")\par
+    except Exception as e:\par
+        logging.error(f"\'ce\'f8\'e8\'e1\'ea\'e0 \'ef\'f0\'e8 \'ee\'f2\'ef\'f0\'e0\'e2\'ea\'e5 \'ee\'f2\'f7\'b8\'f2\'e0: \{e\}")\par
+\par
+# === \'c7\'c0\'cf\'d3\'d1\'ca ===\par
+if __name__ == "__main__":\par
+    logging.info("\f5\u9989?\f2\lang1033  \f1\lang1049\'c1\'ee\'f2 \'e7\'e0\'ef\'f3\'f9\'e5\'ed. \'cf\'e5\'f0\'e2\'fb\'e9 \'ee\'f2\'f7\'b8\'f2 \'f7\'e5\'f0\'e5\'e7 2 \'f7\'e0\'f1\'e0.")\par
+    send_report()\par
+    schedule.every(2).hours.do(send_report)\par
+\par
+    while True:\par
+        schedule.run_pending()\par
+        time.sleep(60)\f0\lang1033\par
+}
+ 
